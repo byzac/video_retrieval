@@ -1,0 +1,10 @@
+# Python Temp-Dateien
+__pycache__/
+*.py[cod]
+
+# Embeddings & große Daten (nicht auf GitHub hochladen)
+embeddings/
+*.pt
+
+# VS Code Einstellungen
+.vscode/
