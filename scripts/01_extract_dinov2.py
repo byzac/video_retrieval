@@ -13,7 +13,9 @@ from transformers import AutoImageProcessor, AutoModel
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Nutze Device: {DEVICE}")
 
-OUTPUT_EMBED_DIR = "../embeddings"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+OUTPUT_EMBED_DIR = os.path.join(PROJECT_DIR, "embeddings")
 os.makedirs(OUTPUT_EMBED_DIR, exist_ok=True)
 
 # DINOv2 Modell und Processor laden

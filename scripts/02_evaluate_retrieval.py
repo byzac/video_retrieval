@@ -5,7 +5,9 @@ import torch.nn.functional as F
 # ---------------------------------------------------------
 # 1. Pfade & Daten laden
 # ---------------------------------------------------------
-EMBED_PATH = "../embeddings/dinov2_embeddings.pt"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+EMBED_PATH = os.path.join(PROJECT_DIR, "embeddings", "dinov2_embeddings.pt")
 
 if not os.path.exists(EMBED_PATH):
     raise FileNotFoundError(f"Datei {EMBED_PATH} nicht gefunden! Bitte zuerst Script 01 ausführen.")
