@@ -23,29 +23,24 @@ model = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE)
 model.eval()
 
 # ---------------------------------------------------------
-# 2. Mini-Dataset laden & Arrow-Tabelle abfragen
+# 2. Dataset laden (im Streaming-Modus für alle Videos)
 # ---------------------------------------------------------
-print("Lade Mini-Dataset über Hugging Face...")
-dataset = load_dataset("sayakpaul/ucf101-subset", split="train[:60]")
+print("Lade Dataset über Hugging Face...")
+# download_mode zwingt HF dazu, die komplette Index-Liste neu abzurufen
+dataset = load_dataset("sayakpaul/ucf101-subset", split="train", download_mode="force_redownload")
 
 arrow_table = dataset.data.table
-column_names = arrow_table.column_names
-print(f"Gefundene Spalten in Arrow: {column_names}")
+video_column = arrow_table["video"]
+num_samples = len(arrow_table)
 
-# Dynamische Erkennung der Spalten
-video_col_name = "video" if "video" in column_names else column_names[0]
-
-# Label-Spalte finden (sucht nach 'label', '_label', 'labels' oder Fallback auf zweite Spalte)
-label_col_name = None
-for candidate in ["label", "_label", "labels", "category"]:
-    if candidate in column_names:
-        label_col_name = candidate
-        break
-
-if label_col_name is None and len(column_names) > 1:
-    label_col_name = [c for c in column_names if c != video_col_name][0]
-
-print(f"Nutze Video-Spalte: '{video_col_name}' | Label-Spalte: '{label_col_name}'")
+def parse_class_from_path(file_path):
+    """Extrahiert den Klassennamen aus dem Videopfad."""
+    filename = os.path.basename(file_path)
+    if filename.startswith("v_"):
+        parts = filename.split("_")
+        if len(parts) >= 2:
+            return parts[1]
+    return "Unknown"
 
 def read_video_pyav(video_bytes):
     """Liest Video-Bytes ein und gibt eine Liste von PIL Images zurück."""
@@ -56,11 +51,14 @@ def read_video_pyav(video_bytes):
     return frames
 
 # ---------------------------------------------------------
-# 3. Hilfsfunktion: Video-Frames extrahieren & verarbeiten
+# 3. Hilfsfunktion: Feature Extraction
 # ---------------------------------------------------------
 def extract_dinov2_embedding_from_video(video_frames, num_samples=8):
     total_frames = len(video_frames)
-    indices = np.linspace(0, total_frames - 1, num_samples, dtype=int)
+    if total_frames == 0:
+        raise ValueError("Video enthält keine Frames.")
+        
+    indices = np.linspace(0, total_frames - 1, min(num_samples, total_frames), dtype=int)
     sampled_frames = [video_frames[i] for i in indices]
 
     # Preprocessing für DINOv2
@@ -78,67 +76,62 @@ def extract_dinov2_embedding_from_video(video_frames, num_samples=8):
     return video_embedding.cpu()
 
 # ---------------------------------------------------------
-# 4. Feature Extraction & Split in Query / Gallery
+# 4. Feature Extraction & Query/Gallery Split
 # ---------------------------------------------------------
-query_embeddings = []
-query_labels = []
-gallery_embeddings = []
-gallery_labels = []
+raw_query_embeddings, raw_query_labels = [], []
+raw_gallery_embeddings, raw_gallery_labels = [], []
 
-print("Extrahiere DINOv2 Embeddings...")
+print(f"Insgesamt {num_samples} Videos im PyArrow Table gefunden. Starte Verarbeitung...")
 
-video_column = arrow_table[video_col_name]
-label_column = arrow_table[label_col_name] if label_col_name else None
-num_samples = len(arrow_table)
-
+processed_count = 0
 for i in range(num_samples):
-    # Zugriff auf das Struct-Feld 'bytes'
+    # Direkter PyArrow Zugriff auf rohes Dictionary
     video_struct = video_column[i].as_py()
     
-    if isinstance(video_struct, dict) and "bytes" in video_struct and video_struct["bytes"] is not None:
-        video_bytes = video_struct["bytes"]
-    elif isinstance(video_struct, bytes):
-        video_bytes = video_struct
+    file_path = ""
+    video_bytes = None
+
+    if isinstance(video_struct, dict):
+        file_path = video_struct.get("path", "")
+        video_bytes = video_struct.get("bytes", None)
+    
+    # Klasse aus Pfad extrahieren
+    class_label = parse_class_from_path(file_path)
+
+    if video_bytes is None and file_path and os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            video_bytes = f.read()
+
+    if video_bytes is None:
+        continue
+
+    try:
+        video_frames = read_video_pyav(video_bytes)
+        emb = extract_dinov2_embedding_from_video(video_frames)
+    except Exception as e:
+        print(f"Überspringe Index {i} wegen Fehler: {e}")
+        continue
+
+    # 20% Query (jedes 5. Video), 80% Gallery
+    if processed_count % 5 == 0:
+        raw_query_embeddings.append(emb)
+        raw_query_labels.append(class_label)
     else:
-        file_path = video_struct.get("path") if isinstance(video_struct, dict) else None
-        if file_path and os.path.exists(file_path):
-            with open(file_path, "rb") as f:
-                video_bytes = f.read()
-        else:
-            raise ValueError(f"Konnte keine Video-Bytes für Index {i} finden.")
+        raw_gallery_embeddings.append(emb)
+        raw_gallery_labels.append(class_label)
 
-    # Label auslesen (oder als Index vergeben, falls keine Spalte vorhanden)
-    if label_column is not None:
-        label = label_column[i].as_py()
-    else:
-        label = i
+    processed_count += 1
+    if processed_count % 5 == 0 or processed_count == num_samples:
+        print(f"Erfolgreich verarbeitet: {processed_count}/{num_samples} Videos...")
 
-    video_frames = read_video_pyav(video_bytes)
-    emb = extract_dinov2_embedding_from_video(video_frames)
+# Label Mapping von Strings zu Integer-IDs
+unique_labels = sorted(list(set(raw_query_labels + raw_gallery_labels)))
+label2id = {label: idx for idx, label in enumerate(unique_labels)}
 
-    # 20% als Query, 80% als Gallery aufteilen
-    if i % 5 == 0:
-        query_embeddings.append(emb)
-        query_labels.append(label)
-    else:
-        gallery_embeddings.append(emb)
-        gallery_labels.append(label)
-
-    if (i + 1) % 10 == 0 or (i + 1) == num_samples:
-        print(f"Verarbeitet: {i + 1}/{num_samples} Videos")
-
-# Tensor-Konvertierung
-query_embeddings = torch.stack(query_embeddings)
-gallery_embeddings = torch.stack(gallery_embeddings)
-
-# Falls Labels Strings/Pfade sind, in Integers mappen
-if query_labels and isinstance(query_labels[0], str):
-    label_mapping = {l: idx for idx, l in enumerate(set(query_labels + gallery_labels))}
-    query_labels = [label_mapping[l] for l in query_labels]
-    gallery_labels = [label_mapping[l] for l in gallery_labels]
-
-query_labels = torch.tensor(query_labels)
-gallery_labels = torch.tensor(gallery_labels)
+query_embeddings = torch.stack(raw_query_embeddings)
+gallery_embeddings = torch.stack(raw_gallery_embeddings)
+query_labels = torch.tensor([label2id[l] for l in raw_query_labels])
+gallery_labels = torch.tensor([label2id[l] for l in raw_gallery_labels])
 
 # ---------------------------------------------------------
 # 5. Speichern
@@ -147,8 +140,11 @@ torch.save({
     "query_emb": query_embeddings,
     "query_labels": query_labels,
     "gallery_emb": gallery_embeddings,
-    "gallery_labels": gallery_labels
+    "gallery_labels": gallery_labels,
+    "label_mapping": label2id
 }, os.path.join(OUTPUT_EMBED_DIR, "dinov2_embeddings.pt"))
 
-print(f"\nFertig! Speicherung erfolgreich in '{OUTPUT_EMBED_DIR}/dinov2_embeddings.pt'")
-print(f"Query Shape: {query_embeddings.shape}, Gallery Shape: {gallery_embeddings.shape}")
+print("\n--- Extraktion erfolgreich abgeschlossen! ---")
+print(f"Gespeicherte Vektoren in '{OUTPUT_EMBED_DIR}/dinov2_embeddings.pt'")
+print(f"Gefundene eindeutige Klassen ({len(unique_labels)}): {unique_labels}")
+print(f"Query Shape: {query_embeddings.shape} | Gallery Shape: {gallery_embeddings.shape}")
