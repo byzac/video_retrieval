@@ -8,7 +8,7 @@ from datasets import load_dataset
 from transformers import AutoImageProcessor, AutoModel
 
 # ---------------------------------------------------------
-# 1. Setup & Pfade
+# 1. Setup & Pfade 
 # ---------------------------------------------------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Nutze Device: {DEVICE}")
@@ -19,6 +19,8 @@ OUTPUT_EMBED_DIR = os.path.join(PROJECT_DIR, "embeddings")
 os.makedirs(OUTPUT_EMBED_DIR, exist_ok=True)
 
 # DINOv2 Modell und Processor laden
+"""Modellwahl & Initialisierung: Was passiert hier: facebook/dinov2-base lädt eine ViT-Base Architektur
+(konkret ein ViT-Base/14 mit14x14 Patches)"""
 MODEL_NAME = "facebook/dinov2-base"
 processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME).to(DEVICE)
@@ -64,10 +66,18 @@ def extract_dinov2_embedding_from_video(video_frames, num_samples=8):
     sampled_frames = [video_frames[i] for i in indices]
 
     # Preprocessing für DINOv2
+    """Patch Processing: ViT-Spezifisch: Der Transformer kann keine rohen Pixel verarbeiten.
+     Der processor skaliert die Frames und bereitet sie so vor, dass das Modell sie in 14x14 Pixel 
+     kleine Patches schneiden kann."""
     inputs = processor(images=sampled_frames, return_tensors="pt").to(DEVICE)
 
     with torch.no_grad():
+        """Forward Pass durch die ViT Attention Layers: 
+        Bild wird durch die Self Attention SChichten des Vision Transformers geschickt"""
         outputs = model(**inputs)
+
+        """Typisch ViT: Transformers nutzen CLS-Token (Klassifikationstoken an Index 0)
+        Der Vektor an Position 0 repräsentiert das globale visuelleMerkmal des gesamten Frames"""
         # [CLS]-Token für jeden Frame extrahieren
         frame_embeddings = outputs.last_hidden_state[:, 0, :]
         # Mean Pooling über alle Samples -> 1 Vektor pro Video
