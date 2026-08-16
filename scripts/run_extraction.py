@@ -10,7 +10,7 @@ from extractors import DINOv2Extractor
 
 def extract_kinetics_features():
     # 1. Pfade definieren (wie bei dir eingerichtet)
-    data_dir = "data/kinetics400_test"
+    data_dir = "playground_data/kinetics400_test"
     output_dir = "embeddings"
     output_file = os.path.join(output_dir, "test_dinov2.pt")
 
