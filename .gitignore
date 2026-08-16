@@ -1,10 +1,15 @@
-# Python Temp-Dateien
+# Python Caches & Virtual Environments
 __pycache__/
-*.py[cod]
+*.pyc
+.venv/
+venv/
 
-# Embeddings & große Daten (nicht auf GitHub hochladen)
+# Large Datasets & Video Files
+data/
+*.mp4
+*.avi
+
+# Generated Embeddings & Checkpoints
 embeddings/
 *.pt
-
-# VS Code Einstellungen
-.vscode/
+*.pth

@@ -31,7 +31,7 @@ model.eval()
 # ---------------------------------------------------------
 print("Lade Dataset über Hugging Face...")
 # download_mode zwingt HF dazu, die komplette Index-Liste neu abzurufen
-dataset = load_dataset("sayakpaul/ucf101-subset", split="train", download_mode="force_redownload")
+dataset = load_dataset("liuhuanjim013/kinetics400", split="train", download_mode="force_redownload")
 
 arrow_table = dataset.data.table
 video_column = arrow_table["video"]
@@ -71,7 +71,7 @@ def extract_dinov2_embedding_from_video(video_frames, num_samples=8):
      kleine Patches schneiden kann."""
     inputs = processor(images=sampled_frames, return_tensors="pt").to(DEVICE)
 
-    with torch.no_grad():
+    with torch.no_grad(): #Modelle werden im Inference Modus ausgeführt, keine Gradientenberechnung/Training nötig
         """Forward Pass durch die ViT Attention Layers: 
         Bild wird durch die Self Attention SChichten des Vision Transformers geschickt"""
         outputs = model(**inputs)

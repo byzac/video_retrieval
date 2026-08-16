@@ -1,0 +1,1 @@
+# Recall@K, mAP aus den .pt Dateien berechnen also Berechnung der Retrieval Metriken
